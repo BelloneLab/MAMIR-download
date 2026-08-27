@@ -47,12 +47,13 @@
     <div class="mark" aria-hidden="true">M</div>
     <h1>MAMIR Studio</h1>
     <p>Download the installer for this computer. The installer verifies the private release and
-      chooses the fastest hardware path that actually runs on this machine.</p>
+      chooses the fastest hardware path that actually runs on this machine. Linux x86-64 is
+      available now; Windows and macOS native builds are not available yet.</p>
     <a class="primary" id="download" href="https://github.com/BelloneLab/MAMIR/releases/latest">Choose a download</a>
     <div class="platforms" aria-label="Other operating systems">
-      <a data-os="windows" href="https://github.com/BelloneLab/MAMIR/releases/latest/download/MAMIR-Setup-Windows-x64.exe">Windows x64</a>
-      <a data-os="macos" href="https://github.com/BelloneLab/MAMIR/releases/latest/download/MAMIR-Installer-macOS-universal.dmg">macOS universal</a>
-      <a data-os="linux" href="https://github.com/BelloneLab/MAMIR/releases/latest/download/MAMIR-Installer-Linux-x86_64.AppImage">Linux x86-64</a>
+      <a data-os="windows" data-ready="false" href="https://github.com/BelloneLab/MAMIR/releases/tag/v0.1.0">Windows x64 (not available yet)</a>
+      <a data-os="macos" data-ready="false" href="https://github.com/BelloneLab/MAMIR/releases/tag/v0.1.0">macOS universal (not available yet)</a>
+      <a data-os="linux" data-ready="true" href="https://github.com/BelloneLab/MAMIR/releases/latest/download/MAMIR-Installer-Linux-x86_64.AppImage">Linux x86-64</a>
     </div>
     <div class="routing"><strong>Hardware is selected locally after download.</strong><br>
       Compatible NVIDIA hardware gets the verified CUDA route. Apple Silicon uses MPS. A verified
@@ -77,6 +78,10 @@
       }
       const source = document.querySelector(`[data-os="${platform}"]`);
       button.href = source.href;
+      if (source.dataset.ready !== "true") {
+        button.textContent = source.textContent;
+        return;
+      }
       button.textContent = `Download for ${source.textContent}`;
     })();
   </script>
