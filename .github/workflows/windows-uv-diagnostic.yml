@@ -156,70 +156,40 @@ jobs:
           Remove-Item Env:UV_OFFLINE -ErrorAction SilentlyContinue
           Remove-Item Env:UV_NO_MANAGED_PYTHON -ErrorAction SilentlyContinue
           $env:UV_PYTHON_DOWNLOADS = "automatic"
-          $LegacyArguments = @(
-            "pip", "install", "--python", $Python, "--torch-backend", "cpu",
-            "--constraints", $Constraints, "--reinstall-package", "torch",
-            "--reinstall-package", "torchvision", "torch==2.8.0",
-            "torchvision==0.23.0"
-          )
-          $EmbeddedQuoteArguments = @($LegacyArguments | ForEach-Object {
-            $Value = [string]$_
-            if ($Value -match '\s') { '"' + $Value + '"' } else { $Value }
-          })
-          $PreviousPreference = $ErrorActionPreference
-          try {
-            $ErrorActionPreference = "Continue"
-            $EmbeddedQuoteOutput = @(& $Uv @EmbeddedQuoteArguments 2>&1)
-            $EmbeddedQuoteExit = $LASTEXITCODE
-          } finally {
-            $ErrorActionPreference = $PreviousPreference
-          }
-          $EmbeddedQuoteOutput | ForEach-Object { Write-Output "embedded_quote: $_" }
-          Write-Output "embedded_quote_exit=$EmbeddedQuoteExit"
-
-          $BackslashQuoteArguments = @($LegacyArguments | ForEach-Object {
-            $Value = [string]$_
-            if ($Value -match '\s') { '\"' + $Value + '\"' } else { $Value }
-          })
-          try {
-            $ErrorActionPreference = "Continue"
-            $BackslashQuoteOutput = @(& $Uv @BackslashQuoteArguments 2>&1)
-            $BackslashQuoteExit = $LASTEXITCODE
-          } finally {
-            $ErrorActionPreference = $PreviousPreference
-          }
-          $BackslashQuoteOutput | ForEach-Object { Write-Output "backslash_quote: $_" }
-          Write-Output "backslash_quote_exit=$BackslashQuoteExit"
-
-          $InstallExit = Invoke-MamirNativeToHost -Executable $Uv -Arguments @(
-            "pip", "install", "--python", $Python, "--torch-backend", "cpu",
-            "--constraints", $Constraints, "--reinstall-package", "torch",
-            "--reinstall-package", "torchvision", "torch==2.8.0",
-            "torchvision==0.23.0"
-          )
+          $RunnerRoot = Split-Path -Parent $Library
+          $InstallExit = Invoke-MamirNativeViaPython -Python $Python `
+            -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
+              "pip", "install", "--python", $Python, "--torch-backend", "cpu",
+              "--constraints", $Constraints, "--reinstall-package", "torch",
+              "--reinstall-package", "torchvision", "torch==2.8.0",
+              "torchvision==0.23.0"
+            )
           Write-Output "ps51_helper_install_exit=$InstallExit"
-          $VerifyExit = Invoke-MamirNativeToHost -Executable $Python -Arguments @(
-            $TorchProbe, "verify", "--backend", "cpu"
-          )
+          $VerifyExit = Invoke-MamirNativeViaPython -Python $Python `
+            -RunnerRoot $RunnerRoot -Executable $Python -Arguments @(
+              $TorchProbe, "verify", "--backend", "cpu"
+            )
           Write-Output "ps51_helper_verify_exit=$VerifyExit"
           if ($InstallExit -ne 0 -or $VerifyExit -ne 0) {
             throw "Windows PowerShell 5.1 exact Torch helper failed"
           }
 
           function Test-DiagnosticTorchBackend {
-            $Exit = Invoke-MamirNativeToHost -Executable $Python -Arguments @(
-              $TorchProbe, "verify", "--backend", "cpu"
-            )
+            $Exit = Invoke-MamirNativeViaPython -Python $Python `
+              -RunnerRoot $RunnerRoot -Executable $Python -Arguments @(
+                $TorchProbe, "verify", "--backend", "cpu"
+              )
             return $Exit -eq 0
           }
           function Install-DiagnosticTorchBackend {
             if (Test-DiagnosticTorchBackend) { return $true }
-            $Exit = Invoke-MamirNativeToHost -Executable $Uv -Arguments @(
-              "pip", "install", "--python", $Python, "--torch-backend", "cpu",
-              "--constraints", $Constraints, "--reinstall-package", "torch",
-              "--reinstall-package", "torchvision", "torch==2.8.0",
-              "torchvision==0.23.0"
-            )
+            $Exit = Invoke-MamirNativeViaPython -Python $Python `
+              -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
+                "pip", "install", "--python", $Python, "--torch-backend", "cpu",
+                "--constraints", $Constraints, "--reinstall-package", "torch",
+                "--reinstall-package", "torchvision", "torch==2.8.0",
+                "torchvision==0.23.0"
+              )
             Write-Host "ps51_nested_install_exit=$Exit"
             if ($Exit -ne 0) { return $false }
             return (Test-DiagnosticTorchBackend)
@@ -228,9 +198,10 @@ jobs:
             if (Install-DiagnosticTorchBackend) { return "cpu" }
             throw "Windows PowerShell 5.1 nested Torch flow failed"
           }
-          $UninstallExit = Invoke-MamirNativeToHost -Executable $Uv -Arguments @(
-            "pip", "uninstall", "--python", $Python, "torch", "torchvision"
-          )
+          $UninstallExit = Invoke-MamirNativeViaPython -Python $Python `
+            -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
+              "pip", "uninstall", "--python", $Python, "torch", "torchvision"
+            )
           Write-Output "ps51_helper_uninstall_exit=$UninstallExit"
           if ($UninstallExit -ne 0) { throw "Torch uninstall setup failed" }
           $NestedBackend = Initialize-DiagnosticTorchBackend
@@ -247,6 +218,7 @@ jobs:
               }
 
               Write-Output "==> Windows PowerShell 5.1 installer primitives"
+              $env:PATH = $OriginalPath
               & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
                 -File mamir\install\test-windows-installer.ps1 -SkipUv
               if ($LASTEXITCODE -ne 0) {
