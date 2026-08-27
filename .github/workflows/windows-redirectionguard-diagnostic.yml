@@ -14,7 +14,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: BelloneLab/MAMIR
-          ref: 0ca19a3ce945e31bfd3e12994761b8d239337fb5
+          ref: f8b418f9499f5f95e8303d785d6b24147eed1bd9
           ssh-key: ${{ secrets.MAMIR_READ_KEY }}
           persist-credentials: false
           lfs: false
