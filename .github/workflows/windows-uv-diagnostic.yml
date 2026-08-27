@@ -10,6 +10,15 @@ jobs:
   probe:
     runs-on: windows-latest
     steps:
+      - name: Check out the private immutable installer source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: BelloneLab/MAMIR
+          ref: v0.1.6
+          ssh-key: ${{ secrets.MAMIR_READ_KEY }}
+          persist-credentials: false
+          lfs: false
+          path: mamir
       - name: Probe the exact verified bootstrap
         shell: pwsh
         run: |
@@ -121,6 +130,13 @@ jobs:
               & $VenvPython -c `
                 "import torch,torchvision; print(torch.__version__, torchvision.__version__); print(torch.ones(4).mul_(2).sum().item())"
               if ($LASTEXITCODE -ne 0) { throw "CPU Torch execution probe failed" }
+
+              Write-Output "==> Windows PowerShell 5.1 installer primitives"
+              & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+                -File mamir\install\test-windows-installer.ps1 -SkipUv
+              if ($LASTEXITCODE -ne 0) {
+                throw "Windows PowerShell 5.1 installer primitive probe failed"
+              }
             } finally {
               $env:PATH = $OriginalPath
             }
