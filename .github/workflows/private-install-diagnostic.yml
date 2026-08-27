@@ -203,12 +203,13 @@ jobs:
             "$appimage" --appimage-version
 
             package_root="$PWD/release-deb-stage/MAMIR-Installer-Debian-amd64"
+            sudo apt-get update -qq
+            sudo apt-get install -y desktop-file-utils
             desktop-file-validate \
               "$package_root/usr/share/applications/ch.unige.bellonelab.mamir.installer.desktop"
             dpkg-deb --root-owner-group -Zgzip -z1 --build "$package_root" \
               "$PWD/release-assets/MAMIR-Installer-Ubuntu-Debian-amd64.deb"
             deb="$PWD/release-assets/MAMIR-Installer-Ubuntu-Debian-amd64.deb"
-            sudo apt-get update -qq
             sudo apt-get install -y "$deb"
             install_root="${RUNNER_TEMP}/mamir-installed"
             bundle="/usr/share/mamir-installer/bundle"
