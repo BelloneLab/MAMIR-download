@@ -61,7 +61,7 @@ jobs:
               $Pattern = "^uv " + [regex]::Escape("0.12.5") +
                 " (\([A-Za-z0-9_.-]+\))$"
               $CompatiblePattern = "^uv " + [regex]::Escape("0.12.5") +
-                "( \([A-Za-z0-9_.-]+\))?$"
+                "( \([A-Za-z0-9_.:+-]+( [A-Za-z0-9_.:+-]+)*\))?$"
               Write-Output "strict_match=$(([string]$VersionOutput[0]).Trim() -cmatch $Pattern)"
               Write-Output "compatible_match=$(([string]$VersionOutput[0]).Trim() -cmatch $CompatiblePattern)"
 
@@ -83,6 +83,44 @@ jobs:
                   $Process.ExitCode -ne 0) {
                 throw "verified bootstrap execution probe failed"
               }
+
+              Remove-Item Env:UV_OFFLINE -ErrorAction SilentlyContinue
+              Remove-Item Env:UV_NO_MANAGED_PYTHON -ErrorAction SilentlyContinue
+              $env:UV_PYTHON_DOWNLOADS = "automatic"
+              $env:UV_PYTHON_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "MAMIR Studio Test\tools\python"
+              $env:UV_CACHE_DIR = Join-Path $env:RUNNER_TEMP "mamir-uv-cache"
+              $Venv = Join-Path $env:RUNNER_TEMP "MAMIR Studio Test\runtime"
+              $VenvPython = Join-Path $Venv "Scripts\python.exe"
+              $Constraints = Join-Path $env:RUNNER_TEMP "mamir-install-constraints.txt"
+              Set-Content -LiteralPath $Constraints -Value "numpy>=1.26,<2" -Encoding Ascii
+
+              Write-Output "==> provision exact managed Python"
+              $PythonOutput = @(& $Destination python install --managed-python `
+                --no-config --no-bin --no-registry 3.12.14 2>&1)
+              $PythonExit = $LASTEXITCODE
+              $PythonOutput | ForEach-Object { Write-Output "python_install: $_" }
+              Write-Output "python_install_exit=$PythonExit"
+              if ($PythonExit -ne 0) { throw "managed Python probe failed" }
+
+              $VenvOutput = @(& $Destination venv --seed --managed-python `
+                --no-python-downloads --no-config --python 3.12.14 $Venv 2>&1)
+              $VenvExit = $LASTEXITCODE
+              $VenvOutput | ForEach-Object { Write-Output "venv: $_" }
+              Write-Output "venv_exit=$VenvExit"
+              if ($VenvExit -ne 0) { throw "managed venv probe failed" }
+
+              Write-Output "==> install exact Windows CPU Torch pair"
+              $TorchOutput = @(& $Destination --verbose pip install `
+                --python $VenvPython --torch-backend cpu --constraints $Constraints `
+                --reinstall-package torch --reinstall-package torchvision `
+                "torch==2.8.0" "torchvision==0.23.0" 2>&1)
+              $TorchExit = $LASTEXITCODE
+              $TorchOutput | ForEach-Object { Write-Output "torch_install: $_" }
+              Write-Output "torch_install_exit=$TorchExit"
+              if ($TorchExit -ne 0) { throw "CPU Torch install probe failed" }
+              & $VenvPython -c `
+                "import torch,torchvision; print(torch.__version__, torchvision.__version__); print(torch.ones(4).mul_(2).sum().item())"
+              if ($LASTEXITCODE -ne 0) { throw "CPU Torch execution probe failed" }
             } finally {
               $env:PATH = $OriginalPath
             }
