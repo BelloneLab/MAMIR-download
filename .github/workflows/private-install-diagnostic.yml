@@ -106,10 +106,17 @@ jobs:
             $Installer = (Resolve-Path release-assets\MAMIR-Setup-Windows-x64.exe).Path
             $Destination = Join-Path $env:RUNNER_TEMP "MAMIR Studio Test"
             $SetupLog = Join-Path $env:RUNNER_TEMP "mamir-windows-setup.log"
-            & $Installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART `
-              "/DIR=$Destination" "/LOG=$SetupLog"
-            if ($LASTEXITCODE -ne 0) {
-              throw "compiled Windows setup returned $LASTEXITCODE"
+            $SetupArgs = @(
+              "/VERYSILENT",
+              "/SUPPRESSMSGBOXES",
+              "/NORESTART",
+              "/DIR=`"$Destination`"",
+              "/LOG=`"$SetupLog`""
+            )
+            $Setup = Start-Process -FilePath $Installer -ArgumentList $SetupArgs `
+              -Wait -PassThru
+            if ($Setup.ExitCode -ne 0) {
+              throw "compiled Windows setup returned $($Setup.ExitCode)"
             }
             $Mps = Join-Path $Destination "runtime\Scripts\mps.exe"
             $Ready = Join-Path $Destination (
