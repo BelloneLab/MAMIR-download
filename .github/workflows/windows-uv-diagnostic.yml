@@ -131,6 +131,45 @@ jobs:
                 "import torch,torchvision; print(torch.__version__, torchvision.__version__); print(torch.ones(4).mul_(2).sum().item())"
               if ($LASTEXITCODE -ne 0) { throw "CPU Torch execution probe failed" }
 
+              Write-Output "==> Windows PowerShell 5.1 exact Torch helper"
+              $Ps51Probe = Join-Path $env:RUNNER_TEMP "mamir-ps51-torch-helper.ps1"
+          @'
+          param(
+            [Parameter(Mandatory = $true)][string]$Library,
+            [Parameter(Mandatory = $true)][string]$Uv,
+            [Parameter(Mandatory = $true)][string]$Python,
+            [Parameter(Mandatory = $true)][string]$Constraints,
+            [Parameter(Mandatory = $true)][string]$TorchProbe
+          )
+          $ErrorActionPreference = "Stop"
+          . $Library
+          Remove-Item Env:UV_OFFLINE -ErrorAction SilentlyContinue
+          Remove-Item Env:UV_NO_MANAGED_PYTHON -ErrorAction SilentlyContinue
+          $env:UV_PYTHON_DOWNLOADS = "automatic"
+          $InstallExit = Invoke-MamirNativeToHost -Executable $Uv -Arguments @(
+            "pip", "install", "--python", $Python, "--torch-backend", "cpu",
+            "--constraints", $Constraints, "--reinstall-package", "torch",
+            "--reinstall-package", "torchvision", "torch==2.8.0",
+            "torchvision==0.23.0"
+          )
+          Write-Output "ps51_helper_install_exit=$InstallExit"
+          $VerifyExit = Invoke-MamirNativeToHost -Executable $Python -Arguments @(
+            $TorchProbe, "verify", "--backend", "cpu"
+          )
+          Write-Output "ps51_helper_verify_exit=$VerifyExit"
+          if ($InstallExit -ne 0 -or $VerifyExit -ne 0) {
+            throw "Windows PowerShell 5.1 exact Torch helper failed"
+          }
+          '@ | Set-Content -LiteralPath $Ps51Probe -Encoding UTF8
+              & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+                -File $Ps51Probe `
+                -Library (Resolve-Path "mamir\install\windows-installer-lib.ps1").Path `
+                -Uv $Destination -Python $VenvPython -Constraints $Constraints `
+                -TorchProbe (Resolve-Path "mamir\install\torch_backend.py").Path
+              if ($LASTEXITCODE -ne 0) {
+                throw "Windows PowerShell 5.1 exact Torch helper probe failed"
+              }
+
               Write-Output "==> Windows PowerShell 5.1 installer primitives"
               & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
                 -File mamir\install\test-windows-installer.ps1 -SkipUv
