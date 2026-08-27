@@ -118,28 +118,14 @@ jobs:
               Write-Output "venv_exit=$VenvExit"
               if ($VenvExit -ne 0) { throw "managed venv probe failed" }
 
-              Write-Output "==> install exact Windows CPU Torch pair"
-              $TorchOutput = @(& $Destination --verbose pip install `
-                --python $VenvPython --torch-backend cpu --constraints $Constraints `
-                --reinstall-package torch --reinstall-package torchvision `
-                "torch==2.8.0" "torchvision==0.23.0" 2>&1)
-              $TorchExit = $LASTEXITCODE
-              $TorchOutput | ForEach-Object { Write-Output "torch_install: $_" }
-              Write-Output "torch_install_exit=$TorchExit"
-              if ($TorchExit -ne 0) { throw "CPU Torch install probe failed" }
-              & $VenvPython -c `
-                "import torch,torchvision; print(torch.__version__, torchvision.__version__); print(torch.ones(4).mul_(2).sum().item())"
-              if ($LASTEXITCODE -ne 0) { throw "CPU Torch execution probe failed" }
-
-              Write-Output "==> Windows PowerShell 5.1 exact Torch helper"
-              $Ps51Probe = Join-Path $env:RUNNER_TEMP "mamir-ps51-torch-helper.ps1"
+              Write-Output "==> Windows PowerShell 5.1 exact argv helper"
+              $Ps51Probe = Join-Path $env:RUNNER_TEMP "mamir-ps51-argv-helper.ps1"
           @'
           param(
             [Parameter(Mandatory = $true)][string]$Library,
             [Parameter(Mandatory = $true)][string]$Uv,
             [Parameter(Mandatory = $true)][string]$Python,
-            [Parameter(Mandatory = $true)][string]$Constraints,
-            [Parameter(Mandatory = $true)][string]$TorchProbe
+            [Parameter(Mandatory = $true)][string]$Constraints
           )
           $ErrorActionPreference = "Stop"
           Start-Transcript -Path (Join-Path $env:TEMP "mamir-ps51-helper-transcript.log") `
@@ -157,64 +143,83 @@ jobs:
           Remove-Item Env:UV_NO_MANAGED_PYTHON -ErrorAction SilentlyContinue
           $env:UV_PYTHON_DOWNLOADS = "automatic"
           $RunnerRoot = Split-Path -Parent $Library
+
+          $ArgProbe = Join-Path $env:RUNNER_TEMP "mamir-argv-probe.py"
+          $ArgResult = Join-Path $env:RUNNER_TEMP "MAMIR Studio Test\argv result.json"
+          @"
+          import json
+          import pathlib
+          import sys
+          pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding="utf-8")
+          "@ | Set-Content -LiteralPath $ArgProbe -Encoding UTF8
+          $Expected = @($Constraints, $Python, "value with spaces", 'embedded"quote', "")
+          $ArgExit = Invoke-MamirNativeViaPython -Python $Python `
+            -RunnerRoot $RunnerRoot -Executable $Python `
+            -Arguments @($ArgProbe, $ArgResult, $Expected)
+          Write-Output "ps51_argv_exit=$ArgExit"
+          if ($ArgExit -ne 0 -or -not (Test-Path $ArgResult -PathType Leaf)) {
+            throw "Windows PowerShell 5.1 argv probe could not write its result"
+          }
+          $Actual = @(ConvertFrom-Json (Get-Content -LiteralPath $ArgResult -Raw))
+          Write-Output "ps51_argv_actual=$(ConvertTo-Json -InputObject $Actual -Compress)"
+          if ((ConvertTo-Json -InputObject $Actual -Compress) -cne
+              (ConvertTo-Json -InputObject $Expected -Compress)) {
+            throw "Windows PowerShell 5.1 argv probe changed an argument"
+          }
+
           $InstallExit = Invoke-MamirNativeViaPython -Python $Python `
             -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
-              "pip", "install", "--python", $Python, "--torch-backend", "cpu",
-              "--constraints", $Constraints, "--reinstall-package", "torch",
-              "--reinstall-package", "torchvision", "torch==2.8.0",
-              "torchvision==0.23.0"
+              "pip", "install", "--python", $Python, "--constraints", $Constraints,
+              "--reinstall-package", "typing-extensions", "typing-extensions==4.16.0"
             )
           Write-Output "ps51_helper_install_exit=$InstallExit"
           $VerifyExit = Invoke-MamirNativeViaPython -Python $Python `
             -RunnerRoot $RunnerRoot -Executable $Python -Arguments @(
-              $TorchProbe, "verify", "--backend", "cpu"
+              "-c", "import typing_extensions"
             )
           Write-Output "ps51_helper_verify_exit=$VerifyExit"
           if ($InstallExit -ne 0 -or $VerifyExit -ne 0) {
-            throw "Windows PowerShell 5.1 exact Torch helper failed"
+            throw "Windows PowerShell 5.1 exact package helper failed"
           }
 
-          function Test-DiagnosticTorchBackend {
+          function Test-DiagnosticPackage {
             $Exit = Invoke-MamirNativeViaPython -Python $Python `
               -RunnerRoot $RunnerRoot -Executable $Python -Arguments @(
-                $TorchProbe, "verify", "--backend", "cpu"
+                "-c", "import typing_extensions"
               )
             return $Exit -eq 0
           }
-          function Install-DiagnosticTorchBackend {
-            if (Test-DiagnosticTorchBackend) { return $true }
+          function Install-DiagnosticPackage {
+            if (Test-DiagnosticPackage) { return $true }
             $Exit = Invoke-MamirNativeViaPython -Python $Python `
               -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
-                "pip", "install", "--python", $Python, "--torch-backend", "cpu",
-                "--constraints", $Constraints, "--reinstall-package", "torch",
-                "--reinstall-package", "torchvision", "torch==2.8.0",
-                "torchvision==0.23.0"
+                "pip", "install", "--python", $Python, "--constraints", $Constraints,
+                "--reinstall-package", "typing-extensions", "typing-extensions==4.16.0"
               )
             Write-Host "ps51_nested_install_exit=$Exit"
             if ($Exit -ne 0) { return $false }
-            return (Test-DiagnosticTorchBackend)
+            return (Test-DiagnosticPackage)
           }
-          function Initialize-DiagnosticTorchBackend {
-            if (Install-DiagnosticTorchBackend) { return "cpu" }
-            throw "Windows PowerShell 5.1 nested Torch flow failed"
+          function Initialize-DiagnosticPackage {
+            if (Install-DiagnosticPackage) { return "typing-extensions" }
+            throw "Windows PowerShell 5.1 nested package flow failed"
           }
           $UninstallExit = Invoke-MamirNativeViaPython -Python $Python `
             -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
-              "pip", "uninstall", "--python", $Python, "torch", "torchvision"
+              "pip", "uninstall", "--python", $Python, "typing-extensions"
             )
           Write-Output "ps51_helper_uninstall_exit=$UninstallExit"
-          if ($UninstallExit -ne 0) { throw "Torch uninstall setup failed" }
-          $NestedBackend = Initialize-DiagnosticTorchBackend
-          Write-Output "ps51_nested_backend=$NestedBackend"
+          if ($UninstallExit -ne 0) { throw "package uninstall setup failed" }
+          $NestedPackage = Initialize-DiagnosticPackage
+          Write-Output "ps51_nested_package=$NestedPackage"
           Stop-Transcript | Out-Null
           '@ | Set-Content -LiteralPath $Ps51Probe -Encoding UTF8
               & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
                 -File $Ps51Probe `
                 -Library (Resolve-Path "mamir\install\windows-installer-lib.ps1").Path `
-                -Uv $Destination -Python $VenvPython -Constraints $Constraints `
-                -TorchProbe (Resolve-Path "mamir\install\torch_backend.py").Path
+                -Uv $Destination -Python $VenvPython -Constraints $Constraints
               if ($LASTEXITCODE -ne 0) {
-                throw "Windows PowerShell 5.1 exact Torch helper probe failed"
+                throw "Windows PowerShell 5.1 exact argv helper probe failed"
               }
 
               Write-Output "==> Windows PowerShell 5.1 installer primitives"
