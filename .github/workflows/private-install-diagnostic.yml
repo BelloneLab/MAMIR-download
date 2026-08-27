@@ -1,10 +1,10 @@
-name: Ephemeral private native install diagnostic
+name: Ephemeral private native build and install gate
 
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Exact private MAMIR tag or commit
+        description: Exact private MAMIR tag
         required: true
         type: string
       version:
@@ -16,8 +16,8 @@ permissions:
   contents: read
 
 jobs:
-  install:
-    name: ${{ matrix.platform }} clean install
+  native:
+    name: ${{ matrix.platform }} native installer
     strategy:
       fail-fast: false
       matrix:
@@ -43,84 +43,222 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
+      - name: Validate the exact release identity
+        shell: bash
+        working-directory: mamir
+        env:
+          MAMIR_BUILD_REF: ${{ inputs.ref }}
+          MAMIR_BUILD_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "${MAMIR_BUILD_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "${MAMIR_BUILD_REF}" = "v${MAMIR_BUILD_VERSION}"
+          test "$(git describe --tags --exact-match)" = "${MAMIR_BUILD_REF}"
+          test "$(sed -n 's/^version: *//p' CITATION.cff)" = "${MAMIR_BUILD_VERSION}"
       - name: Build the verified private release bundle
         shell: bash
         working-directory: mamir
+        env:
+          MAMIR_BUILD_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          python -m pip install --upgrade build >"${RUNNER_TEMP}/mamir-build.log" 2>&1
-          mkdir -p release-wheels release-bundle
-          python -m build packages/mamir --outdir "$PWD/release-wheels" >>"${RUNNER_TEMP}/mamir-build.log" 2>&1
-          python -m build . --outdir "$PWD/release-wheels" >>"${RUNNER_TEMP}/mamir-build.log" 2>&1
-          python install/build_release_bundle.py \
-            --wheel-dir release-wheels \
-            --output-dir release-bundle \
-            --version "${{ inputs.version }}" \
-            --commit "$(git rev-parse HEAD)" >>"${RUNNER_TEMP}/mamir-build.log" 2>&1
-      - name: Run the complete Windows installation privately
+          {
+            python -m pip install --upgrade build
+            mkdir -p release-wheels release-bundle release-assets
+            python -m build packages/mamir --outdir "$PWD/release-wheels"
+            python -m build . --outdir "$PWD/release-wheels"
+            python install/build_release_bundle.py \
+              --wheel-dir release-wheels \
+              --output-dir release-bundle \
+              --version "${MAMIR_BUILD_VERSION}" \
+              --commit "$(git rev-parse HEAD)"
+          } >"${RUNNER_TEMP}/mamir-build.log" 2>&1
+      - name: Build, clean-install, and smoke-test Windows setup
         if: matrix.platform == 'windows'
         shell: pwsh
         working-directory: mamir
+        env:
+          MAMIR_BUILD_VERSION: ${{ inputs.version }}
         run: |
-          $ErrorActionPreference = "Continue"
-          if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
-            $PSNativeCommandUseErrorActionPreference = $false
-          }
-          $Log = Join-Path $env:RUNNER_TEMP "mamir-install.log"
-          $Environment = Join-Path $env:RUNNER_TEMP "mamir-runtime"
-          $Tools = Join-Path $env:RUNNER_TEMP "mamir-tools"
-          & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-            -File release-bundle\install\install.ps1 -NoDesktop `
-            -EnvironmentDir $Environment -ToolsDir $Tools *> $Log
-          $Code = $LASTEXITCODE
-          if ($Code -eq 0) {
-            & (Join-Path $Environment "Scripts\mps.exe") --help *>> $Log
-            $Code = $LASTEXITCODE
-          }
-          "MAMIR_INSTALL_EXIT=$Code" | Out-File -FilePath $env:GITHUB_ENV -Append
-          exit 0
-      - name: Run the complete POSIX installation privately
-        if: matrix.platform != 'windows'
+          $ErrorActionPreference = "Stop"
+          $Log = Join-Path $env:RUNNER_TEMP "mamir-windows-native.log"
+          & {
+            $null = [scriptblock]::Create((Get-Content release-bundle\install\install.ps1 -Raw))
+            $null = [scriptblock]::Create((Get-Content release-bundle\install\windows\run-runtime.ps1 -Raw))
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+              -File release-bundle\install\install.ps1 -VerifyBundleOnly
+            if ($LASTEXITCODE -ne 0) { throw "Windows bundle verification failed" }
+
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
+            $Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $Iscc -PathType Leaf)) {
+              throw "Inno Setup compiler was not installed"
+            }
+            $Bundle = (Resolve-Path release-bundle).Path
+            $Output = (Resolve-Path release-assets).Path
+            $Icon = (Resolve-Path release-bundle\studio\static\logo.ico).Path
+            & $Iscc "/DBundleRoot=$Bundle" "/DBuildOutput=$Output" `
+              "/DAppVersion=$env:MAMIR_BUILD_VERSION" "/DSourceIcon=$Icon" `
+              release-bundle\install\windows\MAMIR.iss
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed" }
+
+            $Installer = (Resolve-Path release-assets\MAMIR-Setup-Windows-x64.exe).Path
+            $Destination = Join-Path $env:RUNNER_TEMP "MAMIR Studio Test"
+            $SetupLog = Join-Path $env:RUNNER_TEMP "mamir-windows-setup.log"
+            & $Installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART `
+              "/DIR=$Destination" "/LOG=$SetupLog"
+            if ($LASTEXITCODE -ne 0) {
+              throw "compiled Windows setup returned $LASTEXITCODE"
+            }
+            $Mps = Join-Path $Destination "runtime\Scripts\mps.exe"
+            $Ready = Join-Path $Destination (
+              "logs\install-$env:MAMIR_BUILD_VERSION.ready"
+            )
+            if (-not (Test-Path $Mps -PathType Leaf) -or
+                -not (Test-Path $Ready -PathType Leaf)) {
+              throw "compiled Windows setup did not create a verified ready runtime"
+            }
+            & $Mps --help
+            if ($LASTEXITCODE -ne 0) { throw "installed Windows launcher smoke test failed" }
+            $Hash = (Get-FileHash -Algorithm SHA256 $Installer).Hash.ToLowerInvariant()
+            "$Hash  MAMIR-Setup-Windows-x64.exe" | Out-File `
+              "$Installer.sha256" -Encoding ascii
+          } *> $Log
+      - name: Build, clean-install, and smoke-test macOS disk image
+        if: matrix.platform == 'macos'
         shell: bash
         working-directory: mamir
+        env:
+          MAMIR_BUILD_VERSION: ${{ inputs.version }}
         run: |
-          set +e
-          install_root="${RUNNER_TEMP}/mamir-install-root"
-          MAMIR_INSTALL_DIR="${install_root}" MAMIR_LAUNCH_AFTER_INSTALL=0 \
-            bash release-bundle/install/release-launcher.sh release-bundle \
-            >"${RUNNER_TEMP}/mamir-install.log" 2>&1
-          code=$?
-          if [ "$code" -eq 0 ]; then
-            "${install_root}/runtime/bin/mps" --help \
-              >>"${RUNNER_TEMP}/mamir-install.log" 2>&1
-            code=$?
-          fi
-          printf 'MAMIR_INSTALL_EXIT=%s\n' "$code" >>"${GITHUB_ENV}"
-          exit 0
-      - name: Encrypt the private diagnostic log
+          set -euo pipefail
+          {
+            bash release-bundle/install/install.sh --verify-bundle-only
+            mkdir -p release-stage
+            python release-bundle/install/stage_native_installer.py macos \
+              --root "$PWD/release-bundle" --bundle "$PWD/release-bundle" \
+              --output release-stage \
+              --version "${MAMIR_BUILD_VERSION}"
+            dmg="$PWD/release-assets/MAMIR-Installer-macOS-universal.dmg"
+            hdiutil create -volname "MAMIR Installer" \
+              -srcfolder "$PWD/release-stage/MAMIR Installer.app" \
+              -ov -format UDZO "$dmg"
+            hdiutil verify "$dmg"
+            mount="${RUNNER_TEMP}/mamir-installer-volume"
+            install_root="${RUNNER_TEMP}/mamir-installed"
+            mkdir -p "$mount"
+            hdiutil attach "$dmg" -mountpoint "$mount" -nobrowse
+            trap 'hdiutil detach "$mount"' EXIT
+            bundle="$mount/MAMIR Installer.app/Contents/Resources/bundle"
+            MAMIR_INSTALL_DIR="$install_root" MAMIR_LAUNCH_AFTER_INSTALL=0 \
+              bash "$bundle/install/release-launcher.sh" "$bundle"
+            "$install_root/runtime/bin/mps" --help
+            hdiutil detach "$mount"
+            trap - EXIT
+            shasum -a 256 "$dmg" | sed 's#  .*/#  #' >"$dmg.sha256"
+          } >"${RUNNER_TEMP}/mamir-macos-native.log" 2>&1
+      - name: Build, clean-install, and smoke-test Linux packages
+        if: matrix.platform == 'linux'
+        shell: bash
+        working-directory: mamir
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAMIR_BUILD_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            bash release-bundle/install/install.sh --verify-bundle-only
+            mkdir -p release-stage release-deb-stage appimage-tools
+            python release-bundle/install/stage_native_installer.py linux \
+              --root "$PWD/release-bundle" --bundle "$PWD/release-bundle" \
+              --output release-stage \
+              --version "${MAMIR_BUILD_VERSION}"
+            python release-bundle/install/stage_native_installer.py linux-deb \
+              --root "$PWD/release-bundle" --bundle "$PWD/release-bundle" \
+              --output release-deb-stage \
+              --version "${MAMIR_BUILD_VERSION}"
+
+            gh api -H 'Accept: application/octet-stream' \
+              /repos/AppImage/appimagetool/releases/assets/324406882 \
+              >appimage-tools/appimagetool.AppImage
+            echo 'a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  appimage-tools/appimagetool.AppImage' \
+              | sha256sum --check --strict
+            gh api -H 'Accept: application/octet-stream' \
+              /repos/AppImage/type2-runtime/releases/assets/456065460 \
+              >appimage-tools/runtime-x86_64
+            echo '1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf  appimage-tools/runtime-x86_64' \
+              | sha256sum --check --strict
+            chmod +x appimage-tools/appimagetool.AppImage appimage-tools/runtime-x86_64
+            (
+              cd appimage-tools
+              ./appimagetool.AppImage --appimage-extract >/dev/null
+              VERSION="${MAMIR_BUILD_VERSION}" ARCH=x86_64 ./squashfs-root/AppRun \
+                --runtime-file "$PWD/runtime-x86_64" \
+                "$GITHUB_WORKSPACE/mamir/release-stage/MAMIR-Installer.AppDir" \
+                "$GITHUB_WORKSPACE/mamir/release-assets/MAMIR-Installer-Linux-x86_64.AppImage"
+            )
+            appimage="$PWD/release-assets/MAMIR-Installer-Linux-x86_64.AppImage"
+            chmod +x "$appimage"
+            "$appimage" --appimage-version
+
+            package_root="$PWD/release-deb-stage/MAMIR-Installer-Debian-amd64"
+            desktop-file-validate \
+              "$package_root/usr/share/applications/ch.unige.bellonelab.mamir.installer.desktop"
+            dpkg-deb --root-owner-group -Zgzip -z1 --build "$package_root" \
+              "$PWD/release-assets/MAMIR-Installer-Ubuntu-Debian-amd64.deb"
+            deb="$PWD/release-assets/MAMIR-Installer-Ubuntu-Debian-amd64.deb"
+            sudo apt-get update -qq
+            sudo apt-get install -y "$deb"
+            install_root="${RUNNER_TEMP}/mamir-installed"
+            bundle="/usr/share/mamir-installer/bundle"
+            MAMIR_INSTALL_DIR="$install_root" MAMIR_LAUNCH_AFTER_INSTALL=0 \
+              bash "$bundle/install/release-launcher.sh" "$bundle"
+            "$install_root/runtime/bin/mps" --help
+
+            for asset in "$appimage" "$deb"; do
+              sha256sum "$asset" | sed 's#  .*/#  #' >"$asset.sha256"
+            done
+          } >"${RUNNER_TEMP}/mamir-linux-native.log" 2>&1
+      - name: Encrypt installers, checksums, and private diagnostics
         if: always()
         shell: bash
         env:
-          MAMIR_DIAGNOSTIC_PASSWORD: ${{ secrets.MAMIR_DIAGNOSTIC_PASSWORD }}
+          MAMIR_ARTIFACT_PASSWORD: ${{ secrets.MAMIR_DIAGNOSTIC_PASSWORD }}
         run: |
           set -euo pipefail
-          log="${RUNNER_TEMP}/mamir-install.log"
-          if [ ! -f "$log" ]; then
-            log="${RUNNER_TEMP}/mamir-build.log"
+          test -n "${MAMIR_ARTIFACT_PASSWORD}"
+          encrypted="${RUNNER_TEMP}/mamir-encrypted"
+          mkdir -p "$encrypted"
+          inputs=()
+          while IFS= read -r -d '' file; do
+            inputs+=("$file")
+          done < <(find "$GITHUB_WORKSPACE/mamir/release-assets" -maxdepth 1 \
+            -type f \( -name 'MAMIR-*' -o -name 'MAMIR-*.sha256' \) -print0 2>/dev/null)
+          while IFS= read -r -d '' file; do
+            inputs+=("$file")
+          done < <(find "$RUNNER_TEMP" -maxdepth 1 -type f \
+            -name 'mamir-*.log' -print0 2>/dev/null)
+          if [ "${{ matrix.platform }}" = windows ]; then
+            while IFS= read -r -d '' file; do
+              inputs+=("$file")
+            done < <(find "$RUNNER_TEMP/MAMIR Studio Test/logs" -maxdepth 1 \
+              -type f -name 'install-*' -print0 2>/dev/null)
           fi
-          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 \
-            -pass env:MAMIR_DIAGNOSTIC_PASSWORD -in "$log" \
-            -out "${RUNNER_TEMP}/mamir-${{ matrix.platform }}.log.enc"
-      - name: Transfer only the encrypted diagnostic
+          test "${#inputs[@]}" -gt 0
+          index=0
+          for input in "${inputs[@]}"; do
+            index=$((index + 1))
+            output="$encrypted/$(printf '%02d' "$index")-$(basename "$input").enc"
+            openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 \
+              -pass env:MAMIR_ARTIFACT_PASSWORD -in "$input" -out "$output"
+          done
+      - name: Transfer encrypted outputs only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: mamir-${{ inputs.version }}-${{ matrix.platform }}-diagnostic-encrypted
-          path: ${{ runner.temp }}/mamir-${{ matrix.platform }}.log.enc
+          name: mamir-${{ inputs.version }}-${{ matrix.platform }}-encrypted
+          path: ${{ runner.temp }}/mamir-encrypted/*.enc
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
-      - name: Report the private installation result
-        if: always()
-        shell: bash
-        run: test "${MAMIR_INSTALL_EXIT:-125}" -eq 0
