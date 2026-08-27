@@ -1,0 +1,126 @@
+name: Ephemeral private native install diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact private MAMIR tag or commit
+        required: true
+        type: string
+      version:
+        description: Exact MAMIR version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: ${{ matrix.platform }} clean install
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+          - platform: macos
+            os: macos-latest
+          - platform: linux
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the private immutable source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: BelloneLab/MAMIR
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.MAMIR_READ_KEY }}
+          persist-credentials: false
+          lfs: true
+          path: mamir
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Build the verified private release bundle
+        shell: bash
+        working-directory: mamir
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build >"${RUNNER_TEMP}/mamir-build.log" 2>&1
+          mkdir -p release-wheels release-bundle
+          python -m build packages/mamir --outdir "$PWD/release-wheels" >>"${RUNNER_TEMP}/mamir-build.log" 2>&1
+          python -m build . --outdir "$PWD/release-wheels" >>"${RUNNER_TEMP}/mamir-build.log" 2>&1
+          python install/build_release_bundle.py \
+            --wheel-dir release-wheels \
+            --output-dir release-bundle \
+            --version "${{ inputs.version }}" \
+            --commit "$(git rev-parse HEAD)" >>"${RUNNER_TEMP}/mamir-build.log" 2>&1
+      - name: Run the complete Windows installation privately
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        working-directory: mamir
+        run: |
+          $ErrorActionPreference = "Continue"
+          if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
+          $Log = Join-Path $env:RUNNER_TEMP "mamir-install.log"
+          $Environment = Join-Path $env:RUNNER_TEMP "mamir-runtime"
+          $Tools = Join-Path $env:RUNNER_TEMP "mamir-tools"
+          & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File release-bundle\install\install.ps1 -NoDesktop `
+            -EnvironmentDir $Environment -ToolsDir $Tools *> $Log
+          $Code = $LASTEXITCODE
+          if ($Code -eq 0) {
+            & (Join-Path $Environment "Scripts\mps.exe") --help *>> $Log
+            $Code = $LASTEXITCODE
+          }
+          "MAMIR_INSTALL_EXIT=$Code" | Out-File -FilePath $env:GITHUB_ENV -Append
+          exit 0
+      - name: Run the complete POSIX installation privately
+        if: matrix.platform != 'windows'
+        shell: bash
+        working-directory: mamir
+        run: |
+          set +e
+          install_root="${RUNNER_TEMP}/mamir-install-root"
+          MAMIR_INSTALL_DIR="${install_root}" MAMIR_LAUNCH_AFTER_INSTALL=0 \
+            bash release-bundle/install/release-launcher.sh release-bundle \
+            >"${RUNNER_TEMP}/mamir-install.log" 2>&1
+          code=$?
+          if [ "$code" -eq 0 ]; then
+            "${install_root}/runtime/bin/mps" --help \
+              >>"${RUNNER_TEMP}/mamir-install.log" 2>&1
+            code=$?
+          fi
+          printf 'MAMIR_INSTALL_EXIT=%s\n' "$code" >>"${GITHUB_ENV}"
+          exit 0
+      - name: Encrypt the private diagnostic log
+        if: always()
+        shell: bash
+        env:
+          MAMIR_DIAGNOSTIC_PASSWORD: ${{ secrets.MAMIR_DIAGNOSTIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP}/mamir-install.log"
+          if [ ! -f "$log" ]; then
+            log="${RUNNER_TEMP}/mamir-build.log"
+          fi
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 \
+            -pass env:MAMIR_DIAGNOSTIC_PASSWORD -in "$log" \
+            -out "${RUNNER_TEMP}/mamir-${{ matrix.platform }}.log.enc"
+      - name: Transfer only the encrypted diagnostic
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mamir-${{ inputs.version }}-${{ matrix.platform }}-diagnostic-encrypted
+          path: ${{ runner.temp }}/mamir-${{ matrix.platform }}.log.enc
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Report the private installation result
+        if: always()
+        shell: bash
+        run: test "${MAMIR_INSTALL_EXIT:-125}" -eq 0
