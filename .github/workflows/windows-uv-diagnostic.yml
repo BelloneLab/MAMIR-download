@@ -145,6 +145,13 @@ jobs:
           Start-Transcript -Path (Join-Path $env:TEMP "mamir-ps51-helper-transcript.log") `
             -Force | Out-Null
           . $Library
+          $SpacedConstraints = Join-Path $env:RUNNER_TEMP (
+            "MAMIR Studio Test\releases\0.1.6\requirements\install-constraints.txt"
+          )
+          New-Item -ItemType Directory -Path (Split-Path -Parent $SpacedConstraints) `
+            -Force | Out-Null
+          Copy-Item -LiteralPath $Constraints -Destination $SpacedConstraints -Force
+          $Constraints = $SpacedConstraints
           Remove-Item Env:UV_OFFLINE -ErrorAction SilentlyContinue
           Remove-Item Env:UV_NO_MANAGED_PYTHON -ErrorAction SilentlyContinue
           $env:UV_PYTHON_DOWNLOADS = "automatic"
