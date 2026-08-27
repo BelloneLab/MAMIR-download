@@ -148,10 +148,22 @@ jobs:
           $ArgResult = Join-Path $env:RUNNER_TEMP "MAMIR Studio Test\argv result.json"
           @"
           import json
+          import os
           import pathlib
           import sys
-          pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding="utf-8")
+          actual = sys.argv[2:]
+          expected = [
+              os.environ["MAMIR_PROBE_CONSTRAINTS"],
+              os.environ["MAMIR_PROBE_PYTHON"],
+              "value with spaces",
+              'embedded"quote',
+              "",
+          ]
+          pathlib.Path(sys.argv[1]).write_text(json.dumps(actual), encoding="utf-8")
+          raise SystemExit(0 if actual == expected else 17)
           "@ | Set-Content -LiteralPath $ArgProbe -Encoding UTF8
+          $env:MAMIR_PROBE_CONSTRAINTS = $Constraints
+          $env:MAMIR_PROBE_PYTHON = $Python
           $Expected = @($Constraints, $Python, "value with spaces", 'embedded"quote', "")
           $ProbeArguments = @($ArgProbe, $ArgResult) + $Expected
           $ArgExit = Invoke-MamirNativeViaPython -Python $Python `
@@ -159,18 +171,9 @@ jobs:
             -Arguments $ProbeArguments
           Write-Output "ps51_argv_exit=$ArgExit"
           if ($ArgExit -ne 0 -or -not (Test-Path $ArgResult -PathType Leaf)) {
-            throw "Windows PowerShell 5.1 argv probe could not write its result"
-          }
-          $Actual = @(ConvertFrom-Json (Get-Content -LiteralPath $ArgResult -Raw))
-          Write-Output "ps51_argv_count=$($Actual.Count)"
-          if ($Actual.Count -ne $Expected.Count) {
             throw "Windows PowerShell 5.1 argv probe changed an argument"
           }
-          for ($Index = 0; $Index -lt $Expected.Count; $Index++) {
-            if ([string]$Actual[$Index] -cne [string]$Expected[$Index]) {
-              throw "Windows PowerShell 5.1 argv probe changed argument $Index"
-            }
-          }
+          Write-Output "ps51_argv_json=$(Get-Content -LiteralPath $ArgResult -Raw)"
 
           $InstallExit = Invoke-MamirNativeViaPython -Python $Python `
             -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
