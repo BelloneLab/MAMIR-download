@@ -150,7 +150,7 @@ jobs:
               throw "compiled Windows setup did not create a verified ready runtime"
             }
             if (-not (Select-String -Path $RuntimeLog -SimpleMatch `
-                "using the verified installer-managed uv bootstrap" -Quiet)) {
+                "using the verified embedded uv bootstrap" -Quiet)) {
               throw "Windows setup did not use its embedded bootstrap"
             }
             $RuntimePython = Join-Path $Destination "runtime\Scripts\python.exe"
@@ -200,7 +200,7 @@ jobs:
             UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never UV_NO_MANAGED_PYTHON=1 \
               MAMIR_INSTALL_DIR="$install_root" MAMIR_LAUNCH_AFTER_INSTALL=0 \
               bash "$bundle/install/release-launcher.sh" "$bundle"
-            grep -F "using the verified installer-managed uv bootstrap" \
+            grep -F "using the verified embedded uv bootstrap" \
               "$install_root"/logs/install-*.log
             "$install_root/runtime/bin/python" -c \
               'import sys; assert sys.version_info[:3] == (3, 12, 14)'
@@ -273,7 +273,7 @@ jobs:
             UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never UV_NO_MANAGED_PYTHON=1 \
               MAMIR_INSTALL_DIR="$install_root" MAMIR_LAUNCH_AFTER_INSTALL=0 \
               bash "$bundle/install/release-launcher.sh" "$bundle"
-            grep -F "using the verified installer-managed uv bootstrap" \
+            grep -F "using the verified embedded uv bootstrap" \
               "$install_root"/logs/install-*.log
             "$install_root/runtime/bin/python" -c \
               'import sys; assert sys.version_info[:3] == (3, 12, 14)'
