@@ -175,10 +175,14 @@ jobs:
           }
           Write-Output "ps51_argv_json=$(Get-Content -LiteralPath $ArgResult -Raw)"
 
+          $RunnerConstraints = Join-Path $RunnerRoot "diagnostic-constraints.txt"
+          Copy-Item -LiteralPath $Constraints -Destination $RunnerConstraints -Force
+          $env:VIRTUAL_ENV = Split-Path -Parent (Split-Path -Parent $Python)
+          $env:UV_CONSTRAINT = "diagnostic-constraints.txt"
           $InstallExit = Invoke-MamirNativeViaPython -Python $Python `
             -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
-              "pip", "install", "--python", $Python, "--constraints", $Constraints,
-              "--reinstall-package", "typing-extensions", "typing-extensions==4.16.0"
+              "pip", "install", "--reinstall-package", "typing-extensions",
+              "typing-extensions==4.16.0"
             )
           Write-Output "ps51_helper_install_exit=$InstallExit"
           $VerifyExit = Invoke-MamirNativeViaPython -Python $Python `
@@ -201,8 +205,8 @@ jobs:
             if (Test-DiagnosticPackage) { return $true }
             $Exit = Invoke-MamirNativeViaPython -Python $Python `
               -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
-                "pip", "install", "--python", $Python, "--constraints", $Constraints,
-                "--reinstall-package", "typing-extensions", "typing-extensions==4.16.0"
+                "pip", "install", "--reinstall-package", "typing-extensions",
+                "typing-extensions==4.16.0"
               )
             Write-Host "ps51_nested_install_exit=$Exit"
             if ($Exit -ne 0) { return $false }
@@ -214,7 +218,7 @@ jobs:
           }
           $UninstallExit = Invoke-MamirNativeViaPython -Python $Python `
             -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
-              "pip", "uninstall", "--python", $Python, "typing-extensions"
+              "pip", "uninstall", "typing-extensions"
             )
           Write-Output "ps51_helper_uninstall_exit=$UninstallExit"
           if ($UninstallExit -ne 0) { throw "package uninstall setup failed" }
