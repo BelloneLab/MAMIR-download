@@ -156,6 +156,41 @@ jobs:
           Remove-Item Env:UV_OFFLINE -ErrorAction SilentlyContinue
           Remove-Item Env:UV_NO_MANAGED_PYTHON -ErrorAction SilentlyContinue
           $env:UV_PYTHON_DOWNLOADS = "automatic"
+          $LegacyArguments = @(
+            "pip", "install", "--python", $Python, "--torch-backend", "cpu",
+            "--constraints", $Constraints, "--reinstall-package", "torch",
+            "--reinstall-package", "torchvision", "torch==2.8.0",
+            "torchvision==0.23.0"
+          )
+          $EmbeddedQuoteArguments = @($LegacyArguments | ForEach-Object {
+            $Value = [string]$_
+            if ($Value -match '\s') { '"' + $Value + '"' } else { $Value }
+          })
+          $PreviousPreference = $ErrorActionPreference
+          try {
+            $ErrorActionPreference = "Continue"
+            $EmbeddedQuoteOutput = @(& $Uv @EmbeddedQuoteArguments 2>&1)
+            $EmbeddedQuoteExit = $LASTEXITCODE
+          } finally {
+            $ErrorActionPreference = $PreviousPreference
+          }
+          $EmbeddedQuoteOutput | ForEach-Object { Write-Output "embedded_quote: $_" }
+          Write-Output "embedded_quote_exit=$EmbeddedQuoteExit"
+
+          $BackslashQuoteArguments = @($LegacyArguments | ForEach-Object {
+            $Value = [string]$_
+            if ($Value -match '\s') { '\"' + $Value + '\"' } else { $Value }
+          })
+          try {
+            $ErrorActionPreference = "Continue"
+            $BackslashQuoteOutput = @(& $Uv @BackslashQuoteArguments 2>&1)
+            $BackslashQuoteExit = $LASTEXITCODE
+          } finally {
+            $ErrorActionPreference = $PreviousPreference
+          }
+          $BackslashQuoteOutput | ForEach-Object { Write-Output "backslash_quote: $_" }
+          Write-Output "backslash_quote_exit=$BackslashQuoteExit"
+
           $InstallExit = Invoke-MamirNativeToHost -Executable $Uv -Arguments @(
             "pip", "install", "--python", $Python, "--torch-backend", "cpu",
             "--constraints", $Constraints, "--reinstall-package", "torch",
