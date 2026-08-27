@@ -153,10 +153,6 @@ jobs:
           Copy-Item -LiteralPath $Constraints -Destination $SpacedConstraints -Force
           $Constraints = $SpacedConstraints
           Write-Output "ps51_spaced_constraints=$Constraints"
-          Write-Output (
-            "ps51_spaced_constraints_quoted=" +
-            (ConvertTo-MamirWindowsCommandLineArgument -Value $Constraints)
-          )
           Remove-Item Env:UV_OFFLINE -ErrorAction SilentlyContinue
           Remove-Item Env:UV_NO_MANAGED_PYTHON -ErrorAction SilentlyContinue
           $env:UV_PYTHON_DOWNLOADS = "automatic"
