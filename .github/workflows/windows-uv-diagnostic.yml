@@ -177,10 +177,10 @@ jobs:
 
           $RunnerConstraints = Join-Path $RunnerRoot "diagnostic-constraints.txt"
           Copy-Item -LiteralPath $Constraints -Destination $RunnerConstraints -Force
-          $env:VIRTUAL_ENV = Split-Path -Parent (Split-Path -Parent $Python)
-          $env:UV_CONSTRAINT = "diagnostic-constraints.txt"
-          $InstallExit = Invoke-MamirNativeViaPython -Python $Python `
-            -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
+          $EnvironmentPath = Split-Path -Parent (Split-Path -Parent $Python)
+          $InstallExit = Invoke-MamirUvViaPython -Python $Python `
+            -RunnerRoot $RunnerRoot -Uv $Uv -EnvironmentPath $EnvironmentPath `
+            -ConstraintPath "diagnostic-constraints.txt" -Arguments @(
               "pip", "install", "--reinstall-package", "typing-extensions",
               "typing-extensions==4.16.0"
             )
@@ -203,8 +203,9 @@ jobs:
           }
           function Install-DiagnosticPackage {
             if (Test-DiagnosticPackage) { return $true }
-            $Exit = Invoke-MamirNativeViaPython -Python $Python `
-              -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
+            $Exit = Invoke-MamirUvViaPython -Python $Python `
+              -RunnerRoot $RunnerRoot -Uv $Uv -EnvironmentPath $EnvironmentPath `
+              -ConstraintPath "diagnostic-constraints.txt" -Arguments @(
                 "pip", "install", "--reinstall-package", "typing-extensions",
                 "typing-extensions==4.16.0"
               )
@@ -216,8 +217,9 @@ jobs:
             if (Install-DiagnosticPackage) { return "typing-extensions" }
             throw "Windows PowerShell 5.1 nested package flow failed"
           }
-          $UninstallExit = Invoke-MamirNativeViaPython -Python $Python `
-            -RunnerRoot $RunnerRoot -Executable $Uv -Arguments @(
+          $UninstallExit = Invoke-MamirUvViaPython -Python $Python `
+            -RunnerRoot $RunnerRoot -Uv $Uv -EnvironmentPath $EnvironmentPath `
+            -Arguments @(
               "pip", "uninstall", "typing-extensions"
             )
           Write-Output "ps51_helper_uninstall_exit=$UninstallExit"
