@@ -1,0 +1,109 @@
+name: Ephemeral Windows bootstrap diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - name: Probe the exact verified bootstrap
+        shell: pwsh
+        run: |
+          $Log = Join-Path $env:RUNNER_TEMP "mamir-windows-uv-probe.log"
+          & {
+            $ErrorActionPreference = "Stop"
+            $Archive = Join-Path $env:RUNNER_TEMP "uv-x86_64-pc-windows-msvc.zip"
+            $Extracted = Join-Path $env:RUNNER_TEMP "uv-extracted"
+            Invoke-WebRequest -UseBasicParsing `
+              -Uri "https://github.com/astral-sh/uv/releases/download/0.12.5/uv-x86_64-pc-windows-msvc.zip" `
+              -OutFile $Archive
+            $ArchiveHash = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant()
+            if ($ArchiveHash -ne "4c4d49d8738847d9b71ba319e49a5688c93eac0fe6204b1df24e98528dddf39a") {
+              throw "archive hash mismatch"
+            }
+            Expand-Archive -LiteralPath $Archive -DestinationPath $Extracted
+            $Source = (Get-ChildItem $Extracted -Recurse -Filter uv.exe -File).FullName
+            $DestinationDir = Join-Path $env:RUNNER_TEMP "MAMIR Studio Test\tools\uv"
+            New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+            $Destination = Join-Path $DestinationDir "uv.exe"
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force
+            Unblock-File -LiteralPath $Destination -ErrorAction SilentlyContinue
+            $ExecutableHash = (Get-FileHash -Algorithm SHA256 $Destination).Hash.ToLowerInvariant()
+            if ($ExecutableHash -ne "8da6cedef60c27ac997ebf400fbfc6d373c5b0a7ae6a299b9d52be7fe63723fb") {
+              throw "executable hash mismatch"
+            }
+
+            $OriginalPath = $env:PATH
+            $env:PATH = @(
+              (Join-Path $env:SystemRoot "System32"),
+              (Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0")
+            ) -join ";"
+            $env:UV_OFFLINE = "1"
+            $env:UV_PYTHON_DOWNLOADS = "never"
+            $env:UV_NO_MANAGED_PYTHON = "1"
+            try {
+              Write-Output "powershell=$($PSVersionTable.PSVersion)"
+              Write-Output "path=$Destination"
+              Write-Output "size=$((Get-Item -LiteralPath $Destination).Length)"
+              Write-Output "sha256=$ExecutableHash"
+              $VersionOutput = @(& $Destination --version 2>&1)
+              $ExitCode = $LASTEXITCODE
+              Write-Output "invocation_exit=$ExitCode"
+              Write-Output "invocation_count=$($VersionOutput.Count)"
+              for ($Index = 0; $Index -lt $VersionOutput.Count; $Index++) {
+                $Text = [string]$VersionOutput[$Index]
+                Write-Output "invocation_output[$Index]=$($Text.Replace("`r", "<CR>").Replace("`n", "<LF>"))"
+              }
+              $Pattern = "^uv " + [regex]::Escape("0.12.5") +
+                " (\([A-Za-z0-9_.-]+\))$"
+              $CompatiblePattern = "^uv " + [regex]::Escape("0.12.5") +
+                "( \([A-Za-z0-9_.-]+\))?$"
+              Write-Output "strict_match=$(([string]$VersionOutput[0]).Trim() -cmatch $Pattern)"
+              Write-Output "compatible_match=$(([string]$VersionOutput[0]).Trim() -cmatch $CompatiblePattern)"
+
+              $Process = New-Object System.Diagnostics.Process
+              $Process.StartInfo.FileName = $Destination
+              $Process.StartInfo.Arguments = "--version"
+              $Process.StartInfo.UseShellExecute = $false
+              $Process.StartInfo.RedirectStandardOutput = $true
+              $Process.StartInfo.RedirectStandardError = $true
+              $null = $Process.Start()
+              $Stdout = $Process.StandardOutput.ReadToEnd().Trim()
+              $Stderr = $Process.StandardError.ReadToEnd().Trim()
+              $Process.WaitForExit()
+              Write-Output "process_exit=$($Process.ExitCode)"
+              Write-Output "process_stdout=$Stdout"
+              Write-Output "process_stderr=$Stderr"
+              if ($ExitCode -ne 0 -or $VersionOutput.Count -ne 1 -or
+                  -not (([string]$VersionOutput[0]).Trim() -cmatch $CompatiblePattern) -or
+                  $Process.ExitCode -ne 0) {
+                throw "verified bootstrap execution probe failed"
+              }
+            } finally {
+              $env:PATH = $OriginalPath
+            }
+          } *> $Log
+      - name: Encrypt the diagnostic
+        if: always()
+        shell: bash
+        env:
+          MAMIR_DIAGNOSTIC_PASSWORD: ${{ secrets.MAMIR_DIAGNOSTIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "${MAMIR_DIAGNOSTIC_PASSWORD}"
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 \
+            -pass env:MAMIR_DIAGNOSTIC_PASSWORD \
+            -in "${RUNNER_TEMP}/mamir-windows-uv-probe.log" \
+            -out "${RUNNER_TEMP}/mamir-windows-uv-probe.log.enc"
+      - name: Transfer the encrypted diagnostic only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mamir-windows-uv-probe-encrypted
+          path: ${{ runner.temp }}/mamir-windows-uv-probe.log.enc
+          if-no-files-found: error
+          retention-days: 1
