@@ -153,18 +153,23 @@ jobs:
           pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding="utf-8")
           "@ | Set-Content -LiteralPath $ArgProbe -Encoding UTF8
           $Expected = @($Constraints, $Python, "value with spaces", 'embedded"quote', "")
+          $ProbeArguments = @($ArgProbe, $ArgResult) + $Expected
           $ArgExit = Invoke-MamirNativeViaPython -Python $Python `
             -RunnerRoot $RunnerRoot -Executable $Python `
-            -Arguments @($ArgProbe, $ArgResult, $Expected)
+            -Arguments $ProbeArguments
           Write-Output "ps51_argv_exit=$ArgExit"
           if ($ArgExit -ne 0 -or -not (Test-Path $ArgResult -PathType Leaf)) {
             throw "Windows PowerShell 5.1 argv probe could not write its result"
           }
           $Actual = @(ConvertFrom-Json (Get-Content -LiteralPath $ArgResult -Raw))
-          Write-Output "ps51_argv_actual=$(ConvertTo-Json -InputObject $Actual -Compress)"
-          if ((ConvertTo-Json -InputObject $Actual -Compress) -cne
-              (ConvertTo-Json -InputObject $Expected -Compress)) {
+          Write-Output "ps51_argv_count=$($Actual.Count)"
+          if ($Actual.Count -ne $Expected.Count) {
             throw "Windows PowerShell 5.1 argv probe changed an argument"
+          }
+          for ($Index = 0; $Index -lt $Expected.Count; $Index++) {
+            if ([string]$Actual[$Index] -cne [string]$Expected[$Index]) {
+              throw "Windows PowerShell 5.1 argv probe changed argument $Index"
+            }
           }
 
           $InstallExit = Invoke-MamirNativeViaPython -Python $Python `
