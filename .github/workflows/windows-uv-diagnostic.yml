@@ -160,6 +160,36 @@ jobs:
           if ($InstallExit -ne 0 -or $VerifyExit -ne 0) {
             throw "Windows PowerShell 5.1 exact Torch helper failed"
           }
+
+          function Test-DiagnosticTorchBackend {
+            $Exit = Invoke-MamirNativeToHost -Executable $Python -Arguments @(
+              $TorchProbe, "verify", "--backend", "cpu"
+            )
+            return $Exit -eq 0
+          }
+          function Install-DiagnosticTorchBackend {
+            if (Test-DiagnosticTorchBackend) { return $true }
+            $Exit = Invoke-MamirNativeToHost -Executable $Uv -Arguments @(
+              "pip", "install", "--python", $Python, "--torch-backend", "cpu",
+              "--constraints", $Constraints, "--reinstall-package", "torch",
+              "--reinstall-package", "torchvision", "torch==2.8.0",
+              "torchvision==0.23.0"
+            )
+            Write-Host "ps51_nested_install_exit=$Exit"
+            if ($Exit -ne 0) { return $false }
+            return (Test-DiagnosticTorchBackend)
+          }
+          function Initialize-DiagnosticTorchBackend {
+            if (Install-DiagnosticTorchBackend) { return "cpu" }
+            throw "Windows PowerShell 5.1 nested Torch flow failed"
+          }
+          $UninstallExit = Invoke-MamirNativeToHost -Executable $Uv -Arguments @(
+            "pip", "uninstall", "--python", $Python, "torch", "torchvision"
+          )
+          Write-Output "ps51_helper_uninstall_exit=$UninstallExit"
+          if ($UninstallExit -ne 0) { throw "Torch uninstall setup failed" }
+          $NestedBackend = Initialize-DiagnosticTorchBackend
+          Write-Output "ps51_nested_backend=$NestedBackend"
           '@ | Set-Content -LiteralPath $Ps51Probe -Encoding UTF8
               & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
                 -File $Ps51Probe `
