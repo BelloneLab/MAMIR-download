@@ -142,6 +142,8 @@ jobs:
             [Parameter(Mandatory = $true)][string]$TorchProbe
           )
           $ErrorActionPreference = "Stop"
+          Start-Transcript -Path (Join-Path $env:TEMP "mamir-ps51-helper-transcript.log") `
+            -Force | Out-Null
           . $Library
           Remove-Item Env:UV_OFFLINE -ErrorAction SilentlyContinue
           Remove-Item Env:UV_NO_MANAGED_PYTHON -ErrorAction SilentlyContinue
@@ -190,6 +192,7 @@ jobs:
           if ($UninstallExit -ne 0) { throw "Torch uninstall setup failed" }
           $NestedBackend = Initialize-DiagnosticTorchBackend
           Write-Output "ps51_nested_backend=$NestedBackend"
+          Stop-Transcript | Out-Null
           '@ | Set-Content -LiteralPath $Ps51Probe -Encoding UTF8
               & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
                 -File $Ps51Probe `
