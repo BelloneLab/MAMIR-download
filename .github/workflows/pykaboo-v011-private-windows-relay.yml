@@ -1,0 +1,236 @@
+name: PyKaboo v0.1.1 ephemeral private Windows gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out the private immutable source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: BelloneLab/pykaboo
+          ref: v0.1.1
+          ssh-key: ${{ secrets.PYKABOO_V011_READ_KEY }}
+          persist-credentials: false
+          path: pykaboo
+
+      - name: Download and verify private immutable installer inputs
+        shell: pwsh
+        working-directory: pykaboo
+        env:
+          SEGMENTATION_URL: ${{ secrets.PYKABOO_V011_SEGMENTATION_URL }}
+          POSE_URL: ${{ secrets.PYKABOO_V011_POSE_URL }}
+          MAMIR_WHEEL_URL: ${{ secrets.PYKABOO_V011_MAMIR_WHEEL_URL }}
+          MAMIR_MODEL_URL: ${{ secrets.PYKABOO_V011_MAMIR_MODEL_URL }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ProgressPreference = "SilentlyContinue"
+          $Log = Join-Path $env:RUNNER_TEMP "pykaboo-windows-native.log"
+          New-Item -ItemType File -Path $Log -Force | Out-Null
+          & {
+            New-Item -ItemType Directory `
+              release-input\models,release-input\mamir -Force | Out-Null
+            $Inputs = @(
+              @{
+                Name = "checkpoint_best_total.pth"
+                Uri = $env:SEGMENTATION_URL
+                Path = "release-input\models\checkpoint_best_total.pth"
+                Size = 141732111
+                Sha256 = "6500badcf5bfdc1f08de9b598a06af08836c1feb593edd035dd2ad48d3ddbaa8"
+              },
+              @{
+                Name = "poseModel_largebest.pt"
+                Uri = $env:POSE_URL
+                Path = "release-input\models\poseModel_largebest.pt"
+                Size = 224939911
+                Sha256 = "213d7769b7c1a792edd46da66e22e6b21e1906932ae30c268fe647ca74fff349"
+              },
+              @{
+                Name = "mamir-0.0.1-py3-none-any.whl"
+                Uri = $env:MAMIR_WHEEL_URL
+                Path = "release-input\mamir\mamir-0.0.1-py3-none-any.whl"
+                Size = 901194
+                Sha256 = "5d8e4fc1b89064e668d19a918228b3093607c3701acb0724d5d57392daf43705"
+              },
+              @{
+                Name = "mask_cpv3_large_amodal.pth"
+                Uri = $env:MAMIR_MODEL_URL
+                Path = "release-input\mamir\mask_cpv3_large_amodal.pth"
+                Size = 144956187
+                Sha256 = "de8a8181facfe7d6b7b8f5ee2c8c6ca80570c1e033a984123307189d940cf185"
+              }
+            )
+            foreach ($Input in $Inputs) {
+              if ([string]::IsNullOrWhiteSpace($Input.Uri)) {
+                throw "missing temporary URL for $($Input.Name)"
+              }
+              Invoke-WebRequest -UseBasicParsing -Uri $Input.Uri -OutFile $Input.Path
+              $File = Get-Item -LiteralPath $Input.Path
+              if ($File.Length -ne $Input.Size) {
+                throw "$($Input.Name) size mismatch"
+              }
+              $Digest = (Get-FileHash -LiteralPath $Input.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($Digest -ne $Input.Sha256) {
+                throw "$($Input.Name) SHA-256 mismatch"
+              }
+            }
+            Write-Host "PASS - four private release inputs match fixed size and SHA-256"
+          } *>> $Log
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.10"
+
+      - name: Validate, build, clean-install, launch, and uninstall
+        shell: pwsh
+        working-directory: pykaboo
+        env:
+          PYKABOO_NVIDIA: "0"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Log = Join-Path $env:RUNNER_TEMP "pykaboo-windows-native.log"
+          & {
+            $ExpectedCommit = "930334fbfe3ed2a4c5e35fb8d812629e0829d8b6"
+            $ActualCommit = (& git rev-parse HEAD).Trim()
+            if ($ActualCommit -ne $ExpectedCommit) {
+              throw "private checkout identity mismatch"
+            }
+            if ((& git describe --tags --exact-match).Trim() -ne "v0.1.1") {
+              throw "private checkout is not exact tag v0.1.1"
+            }
+            $ApplicationVersion = python -c (
+              "from pykaboo_version import __version__; print(__version__)"
+            )
+            if ($ApplicationVersion.Trim() -ne "0.1.1") {
+              throw "application version does not match v0.1.1"
+            }
+
+            python -m pip install "uv==0.12.5"
+            if ($LASTEXITCODE -ne 0) { throw "uv installation failed" }
+            uv pip sync --system --require-hashes --torch-backend cpu `
+              requirements/install-windows-cpu.lock
+            if ($LASTEXITCODE -ne 0) { throw "locked dependency installation failed" }
+            python -m pip install "pytest==9.1.1"
+            if ($LASTEXITCODE -ne 0) { throw "pytest installation failed" }
+            .\scripts\validate.ps1 -PythonExe python
+            if ($LASTEXITCODE -ne 0) { throw "PyKaboo regression suite failed" }
+
+            python install\stage_bootstrap.py --output-dir release-input\bootstraps
+            if ($LASTEXITCODE -ne 0) { throw "bootstrap staging failed" }
+            python install\build_release_bundle.py `
+              --root . --output-dir release-input\bundle `
+              --bootstrap-dir release-input\bootstraps `
+              --model-dir release-input\models `
+              --mamir-wheel release-input\mamir\mamir-0.0.1-py3-none-any.whl `
+              --mamir-model release-input\mamir\mask_cpv3_large_amodal.pth `
+              --mamir-commit 5167408e9a27c5c9dd4e3647951b33eedfa1e741 `
+              --version "0.1.1" --commit $ExpectedCommit
+            if ($LASTEXITCODE -ne 0) { throw "release bundle assembly failed" }
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
+            .\scripts\build_native_installer.ps1 `
+              -BundleRoot release-input\bundle -Version "0.1.1" `
+              -OutputDirectory release
+            if ($LASTEXITCODE -ne 0) { throw "native installer build failed" }
+
+            $Installer = Resolve-Path .\release\PyKaboo-Setup-Windows-x64.exe
+            $OriginalPath = $env:PATH
+            $env:PATH = @(
+              (Join-Path $env:SystemRoot "System32"),
+              (Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0")
+            ) -join ";"
+            try {
+              .\scripts\test_windows_installer.ps1 `
+                -InstallerPath $Installer -Version "0.1.1"
+              if ($LASTEXITCODE -ne 0) {
+                throw "native clean-install acceptance failed"
+              }
+            } finally {
+              $env:PATH = $OriginalPath
+            }
+
+            $Sidecar = "$Installer.sha256"
+            if (-not (Test-Path -LiteralPath $Sidecar -PathType Leaf)) {
+              throw "installer checksum sidecar is missing"
+            }
+            $ExpectedHash = ((Get-Content -LiteralPath $Sidecar -Raw).Trim() -split '\s+')[0]
+            $ActualHash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($ActualHash -ne $ExpectedHash) {
+              throw "native setup SHA-256 sidecar mismatch"
+            }
+            Write-Host (
+              "PASS - exact tag, locked tests, verified inputs, clean setup, " +
+              "doctor, shortcuts, launch, uninstall, and checksum"
+            )
+          } *>> $Log
+
+      - name: Reject fatal native installer diagnostics
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Log = Join-Path $env:RUNNER_TEMP "pykaboo-windows-native.log"
+          if (-not (Test-Path -LiteralPath $Log -PathType Leaf)) {
+            throw "private diagnostic log is missing"
+          }
+          $Forbidden = @(
+            "CUDA_ERROR_INVALID_CONTEXT",
+            "PyKaboo runtime installation failed",
+            "Unable to execute file",
+            "CreateProcess failed",
+            "TerminatingError",
+            "Traceback (most recent call last)"
+          )
+          foreach ($Marker in $Forbidden) {
+            if (Select-String -LiteralPath $Log -SimpleMatch $Marker -Quiet) {
+              throw "forbidden failure marker found in encrypted diagnostics"
+            }
+          }
+
+      - name: Encrypt installer, checksum, and private diagnostics
+        if: always()
+        shell: bash
+        env:
+          PYKABOO_ARTIFACT_PASSWORD: ${{ secrets.PYKABOO_V011_ARTIFACT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "${PYKABOO_ARTIFACT_PASSWORD}"
+          runner_temp="$(cygpath -u "${RUNNER_TEMP}")"
+          workspace="$(cygpath -u "${GITHUB_WORKSPACE}")"
+          stage="${runner_temp}/pykaboo-relay-stage"
+          encrypted="${runner_temp}/pykaboo-encrypted"
+          mkdir -p "$stage" "$encrypted"
+          test -f "${runner_temp}/pykaboo-windows-native.log"
+          cp "${runner_temp}/pykaboo-windows-native.log" "$stage/gate.log"
+          if test -d "${workspace}/pykaboo/release"; then
+            find "${workspace}/pykaboo/release" -maxdepth 1 -type f \
+              \( -name 'PyKaboo-Setup-Windows-x64.exe' \
+                 -o -name 'PyKaboo-Setup-Windows-x64.exe.sha256' \) \
+              -exec cp {} "$stage/" \;
+          fi
+          (
+            cd "$stage"
+            sha256sum -- * > RELAY-SHA256SUMS.txt
+            tar -czf ../pykaboo-relay.tar.gz -- *
+          )
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 \
+            -pass env:PYKABOO_ARTIFACT_PASSWORD \
+            -in "${runner_temp}/pykaboo-relay.tar.gz" \
+            -out "$encrypted/payload.enc"
+
+      - name: Transfer encrypted output only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pykaboo-0.1.1-windows-encrypted
+          path: ${{ runner.temp }}/pykaboo-encrypted/*.enc
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
