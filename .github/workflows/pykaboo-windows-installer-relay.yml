@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: BelloneLab/pykaboo
-          ref: 3570c8e6a561529be83be4aec11fd4183d888ce2
+          ref: 97ed2b669785df6603e5162e152d15a8a65fba8d
           ssh-key: ${{ secrets.PYKABOO_READ_KEY }}
           persist-credentials: false
           path: pykaboo
@@ -25,6 +25,8 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.10"
+          cache: pip
+          cache-dependency-path: pykaboo/requirements-dev.txt
 
       - name: Build and clean-install the native setup
         shell: pwsh
@@ -33,7 +35,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $Log = Join-Path $env:RUNNER_TEMP "pykaboo-windows-installer.log"
           & {
-            $ExpectedCommit = "3570c8e6a561529be83be4aec11fd4183d888ce2"
+            $ExpectedCommit = "97ed2b669785df6603e5162e152d15a8a65fba8d"
             $ActualCommit = (& git rev-parse HEAD).Trim()
             if ($ActualCommit -ne $ExpectedCommit) {
               throw "Private checkout identity mismatch"
@@ -49,7 +51,7 @@ jobs:
 
             .\scripts\validate.ps1 -PythonExe python
             if ($LASTEXITCODE -ne 0) { throw "PyKaboo regression suite failed" }
-            .\scripts\build_release.ps1 -Version "ci-3570c8e" -PythonExe python -Clean
+            .\scripts\build_release.ps1 -Version "ci-97ed2b6" -PythonExe python -Clean
             if ($LASTEXITCODE -ne 0) { throw "PyKaboo Windows build failed" }
             .\scripts\test_windows_installer.ps1 `
               -InstallerPath .\release\PyKaboo-Setup-Windows-x64.exe
@@ -83,7 +85,7 @@ jobs:
             find "${workspace}/pykaboo/release" -maxdepth 1 -type f \
               \( -name 'PyKaboo-Setup-Windows-x64.exe' \
                  -o -name 'PyKaboo-Setup-Windows-x64.exe.sha256' \
-                 -o -name 'pykaboo-ci-3570c8e-windows-x64-warn.txt' \) \
+                 -o -name 'pykaboo-ci-97ed2b6-windows-x64-warn.txt' \) \
               -exec cp {} "$stage/" \;
           fi
           (
