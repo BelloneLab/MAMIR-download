@@ -75,6 +75,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $Log = Join-Path $env:RUNNER_TEMP "mamir-windows-native.log"
+          $ShortcutTest = (Resolve-Path install\test-windows-shortcuts.ps1).Path
           & {
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
               -File install\test-windows-installer.ps1
@@ -172,7 +173,7 @@ jobs:
             try {
               $env:PATH = "$RuntimeScripts;$ShortcutPath"
               & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-                -File release-bundle\install\test-windows-shortcuts.ps1
+                -File $ShortcutTest
               if ($LASTEXITCODE -ne 0) {
                 throw "installed Windows shortcut acceptance test failed"
               }
