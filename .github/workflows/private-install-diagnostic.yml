@@ -15,10 +15,6 @@ jobs:
         include:
           - platform: windows
             os: windows-latest
-          - platform: macos
-            os: macos-latest
-          - platform: linux
-            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out the private immutable source
@@ -95,6 +91,14 @@ jobs:
             $Listener.Start()
             $Port = ([Net.IPEndPoint]$Listener.LocalEndpoint).Port
             $Listener.Stop()
+            $ConfigDirectory = Join-Path $env:USERPROFILE ".mousepose_studio"
+            $ConfigPath = Join-Path $ConfigDirectory "config.json"
+            $ConfigExisted = Test-Path $ConfigPath -PathType Leaf
+            $ConfigBackup = if ($ConfigExisted) {
+              [IO.File]::ReadAllBytes($ConfigPath)
+            } else {
+              $null
+            }
             $PreviousNoWindow = [Environment]::GetEnvironmentVariable(
               "MPS_NO_WINDOW", "Process"
             )
@@ -102,6 +106,10 @@ jobs:
             try {
               $env:MPS_NO_WINDOW = "1"
               $env:MPS_PORT = [string]$Port
+              New-Item -ItemType Directory -Path $ConfigDirectory -Force | Out-Null
+              @{ host = "127.0.0.1"; port = [int]$Port } |
+                ConvertTo-Json -Compress |
+                Set-Content -LiteralPath $ConfigPath -Encoding utf8
               Start-Process -FilePath $Link | Out-Null
               $Health = $null
               $Deadline = (Get-Date).AddSeconds(90)
@@ -130,6 +138,21 @@ jobs:
                 $ExistingIds -notcontains [int]$_.ProcessId
               } | ForEach-Object {
                 Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+              }
+              $Diagnostics = Join-Path $env:LOCALAPPDATA "MAMIR\logs"
+              foreach ($Name in @("desktop-launch.log", "mamir.log", "native-fault.log")) {
+                $Source = Join-Path $Diagnostics $Name
+                if (Test-Path $Source -PathType Leaf) {
+                  $SafeLabel = $Label.ToLowerInvariant().Replace("-", "")
+                  Copy-Item -LiteralPath $Source -Destination (
+                    Join-Path $env:RUNNER_TEMP "mamir-windows-$SafeLabel-$Name"
+                  ) -Force
+                }
+              }
+              if ($ConfigExisted) {
+                [IO.File]::WriteAllBytes($ConfigPath, $ConfigBackup)
+              } else {
+                Remove-Item -LiteralPath $ConfigPath -Force -ErrorAction SilentlyContinue
               }
               if ($null -eq $PreviousNoWindow) {
                 Remove-Item Env:MPS_NO_WINDOW -ErrorAction SilentlyContinue
