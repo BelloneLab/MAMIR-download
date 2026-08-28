@@ -1,0 +1,105 @@
+name: Ephemeral encrypted PyKaboo Windows installer gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out the exact private commit read-only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: BelloneLab/pykaboo
+          ref: 85d4c445dc31d67101a7fcae8a9417e4573bfff3
+          ssh-key: ${{ secrets.PYKABOO_READ_KEY }}
+          persist-credentials: false
+          path: pykaboo
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.10"
+
+      - name: Build and clean-install the native setup
+        shell: pwsh
+        working-directory: pykaboo
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Log = Join-Path $env:RUNNER_TEMP "pykaboo-windows-installer.log"
+          & {
+            $ExpectedCommit = "85d4c445dc31d67101a7fcae8a9417e4573bfff3"
+            $ActualCommit = (& git rev-parse HEAD).Trim()
+            if ($ActualCommit -ne $ExpectedCommit) {
+              throw "Private checkout identity mismatch"
+            }
+
+            python -m pip install --upgrade pip
+            if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
+            python -m pip install -r requirements-dev.txt
+            if ($LASTEXITCODE -ne 0) { throw "dependency installation failed" }
+
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
+
+            .\scripts\validate.ps1 -PythonExe python
+            if ($LASTEXITCODE -ne 0) { throw "PyKaboo regression suite failed" }
+            .\scripts\build_release.ps1 -Version "ci-85d4c44" -PythonExe python -Clean
+            if ($LASTEXITCODE -ne 0) { throw "PyKaboo Windows build failed" }
+            .\scripts\test_windows_installer.ps1 `
+              -InstallerPath .\release\PyKaboo-Setup-Windows-x64.exe
+            if ($LASTEXITCODE -ne 0) { throw "native setup acceptance test failed" }
+
+            $Installer = Resolve-Path .\release\PyKaboo-Setup-Windows-x64.exe
+            $Sidecar = Resolve-Path .\release\PyKaboo-Setup-Windows-x64.exe.sha256
+            $ExpectedHash = ((Get-Content -LiteralPath $Sidecar -Raw).Trim() -split '\s+')[0]
+            $ActualHash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($ActualHash -ne $ExpectedHash) {
+              throw "native setup SHA-256 sidecar mismatch"
+            }
+            "PASS exact commit, tests, build, clean install, shortcuts, uninstall, checksum"
+          } *> $Log
+
+      - name: Encrypt artifacts and private diagnostics
+        if: always()
+        shell: bash
+        env:
+          PYKABOO_ARTIFACT_PASSWORD: ${{ secrets.PYKABOO_ARTIFACT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "${PYKABOO_ARTIFACT_PASSWORD}"
+          stage="${RUNNER_TEMP}/pykaboo-relay-stage"
+          encrypted="${RUNNER_TEMP}/pykaboo-encrypted"
+          mkdir -p "$stage" "$encrypted"
+          cp "${RUNNER_TEMP}/pykaboo-windows-installer.log" "$stage/gate.log"
+          if test -d "${GITHUB_WORKSPACE}/pykaboo/release"; then
+            find "${GITHUB_WORKSPACE}/pykaboo/release" -maxdepth 1 -type f \
+              \( -name 'PyKaboo-Setup-Windows-x64.exe' \
+                 -o -name 'PyKaboo-Setup-Windows-x64.exe.sha256' \
+                 -o -name 'pykaboo-ci-85d4c44-windows-x64-warn.txt' \) \
+              -exec cp {} "$stage/" \;
+          fi
+          (
+            cd "$stage"
+            sha256sum -- * > RELAY-SHA256SUMS.txt
+            tar -czf "${RUNNER_TEMP}/pykaboo-relay.tar.gz" -- *
+          )
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 \
+            -pass env:PYKABOO_ARTIFACT_PASSWORD \
+            -in "${RUNNER_TEMP}/pykaboo-relay.tar.gz" \
+            -out "$encrypted/payload.enc"
+
+      - name: Transfer encrypted output only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pykaboo-windows-installer-encrypted
+          path: ${{ runner.temp }}/pykaboo-encrypted/*.enc
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
