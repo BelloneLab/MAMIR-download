@@ -73,12 +73,14 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${PYKABOO_ARTIFACT_PASSWORD}"
-          stage="${RUNNER_TEMP}/pykaboo-relay-stage"
-          encrypted="${RUNNER_TEMP}/pykaboo-encrypted"
+          runner_temp="$(cygpath -u "${RUNNER_TEMP}")"
+          workspace="$(cygpath -u "${GITHUB_WORKSPACE}")"
+          stage="${runner_temp}/pykaboo-relay-stage"
+          encrypted="${runner_temp}/pykaboo-encrypted"
           mkdir -p "$stage" "$encrypted"
-          cp "${RUNNER_TEMP}/pykaboo-windows-installer.log" "$stage/gate.log"
-          if test -d "${GITHUB_WORKSPACE}/pykaboo/release"; then
-            find "${GITHUB_WORKSPACE}/pykaboo/release" -maxdepth 1 -type f \
+          cp "${runner_temp}/pykaboo-windows-installer.log" "$stage/gate.log"
+          if test -d "${workspace}/pykaboo/release"; then
+            find "${workspace}/pykaboo/release" -maxdepth 1 -type f \
               \( -name 'PyKaboo-Setup-Windows-x64.exe' \
                  -o -name 'PyKaboo-Setup-Windows-x64.exe.sha256' \
                  -o -name 'pykaboo-ci-85d4c44-windows-x64-warn.txt' \) \
@@ -87,11 +89,11 @@ jobs:
           (
             cd "$stage"
             sha256sum -- * > RELAY-SHA256SUMS.txt
-            tar -czf "${RUNNER_TEMP}/pykaboo-relay.tar.gz" -- *
+            tar -czf ../pykaboo-relay.tar.gz -- *
           )
           openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -md sha256 \
             -pass env:PYKABOO_ARTIFACT_PASSWORD \
-            -in "${RUNNER_TEMP}/pykaboo-relay.tar.gz" \
+            -in "${runner_temp}/pykaboo-relay.tar.gz" \
             -out "$encrypted/payload.enc"
 
       - name: Transfer encrypted output only
