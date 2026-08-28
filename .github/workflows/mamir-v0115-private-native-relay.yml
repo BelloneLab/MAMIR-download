@@ -2,6 +2,17 @@ name: MAMIR v0.1.15 ephemeral private native gate
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Native platform to gate
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
 
 permissions:
   contents: read
@@ -12,13 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: windows
-            os: windows-latest
-          - platform: macos
-            os: macos-latest
-          - platform: linux
-            os: ubuntu-latest
+        include: ${{ fromJSON(inputs.platform == 'windows' && '[{"platform":"windows","os":"windows-latest"}]' || inputs.platform == 'macos' && '[{"platform":"macos","os":"macos-latest"}]' || inputs.platform == 'linux' && '[{"platform":"linux","os":"ubuntu-latest"}]' || '[{"platform":"windows","os":"windows-latest"},{"platform":"macos","os":"macos-latest"},{"platform":"linux","os":"ubuntu-latest"}]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out the private immutable source
@@ -523,7 +528,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -d '' logs < <(find "$RUNNER_TEMP" -type f -name '*.log' -print0)
+          logs=()
+          while IFS= read -r -d '' log; do
+            logs+=("$log")
+          done < <(find "$RUNNER_TEMP" -maxdepth 1 -type f -name 'mamir-*.log' -print0)
+          if [ "${{ matrix.platform }}" = windows ]; then
+            while IFS= read -r -d '' log; do
+              logs+=("$log")
+            done < <(find "$RUNNER_TEMP/MAMIR Studio Test/logs" -maxdepth 1 \
+              -type f -name 'install-*' -print0 2>/dev/null)
+          fi
           test "${#logs[@]}" -gt 0
           for log in "${logs[@]}"; do
             if grep -E -q -i \
