@@ -1,4 +1,4 @@
-name: MAMIR v0.1.12 ephemeral private native gate
+name: MAMIR v0.1.13 ephemeral private native gate
 
 on:
   workflow_dispatch:
@@ -15,14 +15,18 @@ jobs:
         include:
           - platform: windows
             os: windows-latest
+          - platform: macos
+            os: macos-latest
+          - platform: linux
+            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out the private immutable source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: BelloneLab/MAMIR
-          ref: v0.1.12
-          ssh-key: ${{ secrets.MAMIR_V0112_READ_KEY }}
+          ref: v0.1.13
+          ssh-key: ${{ secrets.MAMIR_V0113_READ_KEY }}
           persist-credentials: false
           lfs: true
           path: mamir
@@ -34,8 +38,8 @@ jobs:
         shell: bash
         working-directory: mamir
         env:
-          MAMIR_BUILD_REF: v0.1.12
-          MAMIR_BUILD_VERSION: 0.1.12
+          MAMIR_BUILD_REF: v0.1.13
+          MAMIR_BUILD_VERSION: 0.1.13
         run: |
           set -euo pipefail
           [[ "${MAMIR_BUILD_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -46,7 +50,7 @@ jobs:
         shell: bash
         working-directory: mamir
         env:
-          MAMIR_BUILD_VERSION: 0.1.12
+          MAMIR_BUILD_VERSION: 0.1.13
         run: |
           set -euo pipefail
           {
@@ -67,7 +71,7 @@ jobs:
         shell: pwsh
         working-directory: mamir
         env:
-          MAMIR_BUILD_VERSION: 0.1.12
+          MAMIR_BUILD_VERSION: 0.1.13
         run: |
           $ErrorActionPreference = "Stop"
           $Log = Join-Path $env:RUNNER_TEMP "mamir-windows-native.log"
@@ -289,7 +293,7 @@ jobs:
         shell: bash
         working-directory: mamir
         env:
-          MAMIR_BUILD_VERSION: 0.1.12
+          MAMIR_BUILD_VERSION: 0.1.13
         run: |
           set -euo pipefail
           probe_studio() {
@@ -375,7 +379,7 @@ jobs:
         working-directory: mamir
         env:
           GH_TOKEN: ${{ github.token }}
-          MAMIR_BUILD_VERSION: 0.1.12
+          MAMIR_BUILD_VERSION: 0.1.13
         run: |
           set -euo pipefail
           probe_studio() {
@@ -530,7 +534,7 @@ jobs:
         if: always()
         shell: bash
         env:
-          MAMIR_ARTIFACT_PASSWORD: ${{ secrets.MAMIR_V0112_ARTIFACT_PASSWORD }}
+          MAMIR_ARTIFACT_PASSWORD: ${{ secrets.MAMIR_V0113_ARTIFACT_PASSWORD }}
         run: |
           set -euo pipefail
           test -n "${MAMIR_ARTIFACT_PASSWORD}"
@@ -563,7 +567,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: mamir-0.1.12-${{ matrix.platform }}-encrypted
+          name: mamir-0.1.13-${{ matrix.platform }}-encrypted
           path: ${{ runner.temp }}/mamir-encrypted/*.enc
           if-no-files-found: error
           retention-days: 1
