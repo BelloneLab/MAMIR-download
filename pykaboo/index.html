@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="referrer" content="no-referrer">
-  <meta name="pykaboo-release-version" content="0.1.2">
-  <meta name="pykaboo-release-notes" content="RTX 50-series GPUs now use the validated CUDA 12.8 Blackwell runtime automatically. Existing NVIDIA and CPU routes stay unchanged. PyKaboo now shows release notes and asks before updating.">
+  <meta name="pykaboo-release-version" content="0.1.5">
+  <meta name="pykaboo-release-notes" content="PyKaboo no longer claims a camera at startup and releases every camera when it closes, so EthoVision can use the device immediately. Setup now installs and verifies TensorRT automatically on every supported NVIDIA GPU, including RTX, RTX A/Quadro, and Blackwell RTX PRO systems. The CUDA 12.8 wheel hashes are corrected.">
   <title>Download PyKaboo</title>
   <style>
     :root {
@@ -56,9 +56,9 @@
     <h1>PyKaboo</h1>
     <p class="lead">Native Windows setup for the local PyKaboo recording and behavior application. Setup asks for one folder, provisions its own runtime, validates the installed hardware route, and creates the application shortcuts.</p>
     <p class="notice"><strong>GitHub access required.</strong> Sign in with an account authorized for the private <code>BelloneLab/pykaboo</code> repository before downloading.</p>
-    <a class="primary" href="https://github.com/BelloneLab/pykaboo/releases/download/v0.1.2/PyKaboo-Setup-Windows-x64.exe">Download PyKaboo for Windows x64</a>
-    <p class="meta"><span>Version 0.1.2</span><span>479 MiB</span><span>Private prerelease</span></p>
-    <p class="lead"><strong>What’s new:</strong> RTX 50-series GPUs now receive the validated CUDA 12.8 Blackwell runtime automatically. Existing NVIDIA and CPU routes remain unchanged, and PyKaboo asks before applying updates.</p>
+    <a class="primary" href="https://github.com/BelloneLab/pykaboo/releases/download/v0.1.5/PyKaboo-Setup-Windows-x64.exe">Download PyKaboo for Windows x64</a>
+    <p class="meta"><span>Version 0.1.5</span><span>479 MiB</span><span>Private prerelease</span></p>
+    <p class="lead"><strong>What’s new:</strong> Cameras are detected without being claimed at startup and are released when you click <strong>Release Camera</strong> or close PyKaboo, leaving them available to EthoVision. Setup automatically selects the correct CUDA route and installs and verifies TensorRT on every supported NVIDIA GPU—including RTX, RTX A/Quadro, and Blackwell RTX PRO cards—with no manual TensorRT setup.</p>
     <ol class="steps">
       <li>Open the downloaded setup.</li>
       <li>Choose the application folder.</li>
