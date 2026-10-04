@@ -445,9 +445,9 @@ jobs:
             echo 'a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  appimage-tools/appimagetool.AppImage' \
               | sha256sum --check --strict
             gh api -H 'Accept: application/octet-stream' \
-              /repos/AppImage/type2-runtime/releases/assets/456065460 \
+              /repos/AppImage/type2-runtime/releases/assets/596078161 \
               >appimage-tools/runtime-x86_64
-            echo '1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf  appimage-tools/runtime-x86_64' \
+            echo '156f4bdbde9c52d01814600013e0a273f0118dc2de98975f3c8c63427ec79074  appimage-tools/runtime-x86_64' \
               | sha256sum --check --strict
             chmod +x appimage-tools/appimagetool.AppImage appimage-tools/runtime-x86_64
             (
